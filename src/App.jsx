@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import "./App.css";
 import PlayerSelfTest from "./test.jsx";
+import CoursePage from "./components/course.jsx";
 
 /* ---------- Utils: time format ---------- */
 function sToStamp(s) {
@@ -75,7 +76,7 @@ function YouTubeNotes({ videoId }) {
       mounted = false;
       try {
         player?.destroy?.();
-      } catch {}
+      } catch { }
     };
   }, [videoId]);
 
@@ -355,7 +356,7 @@ function VideoPage() {
 export default function App() {
   return (
     <main className="w-screen min-h-screen bg-gray-50">
-      <VideoPage />
+      <CoursePage />
     </main>
   );
 }
