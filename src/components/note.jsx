@@ -37,11 +37,13 @@ function extractYouTubeId(urlOrId) {
   if (!urlOrId) return "";
   try {
     const u = new URL(urlOrId);
-    if (u.hostname.includes("youtube.com") && u.searchParams.get("v")) return u.searchParams.get("v");
+    if (u.hostname.includes("youtube.com") && u.searchParams.get("v"))
+      return u.searchParams.get("v");
     if (u.hostname === "youtu.be") return u.pathname.replace("/", "");
-    if (u.hostname.includes("youtube.com") && u.pathname.startsWith("/embed/")) return u.pathname.split("/").pop();
+    if (u.hostname.includes("youtube.com") && u.pathname.startsWith("/embed/"))
+      return u.pathname.split("/").pop();
   } catch {
-    return urlOrId; // นับว่าเป็น id ตรง ๆ
+    return urlOrId; // treat as raw id
   }
   return urlOrId;
 }
@@ -53,16 +55,21 @@ export default function YouTubeNotes({ videoId, videoUrl }) {
   const textRef = useRef(null);
 
   if (!resolvedVideoId) {
-    return <div className="p-4 text-sm text-red-600">ไม่พบวิดีโอสำหรับแสดง (videoId/videoUrl ว่าง)</div>;
+    return (
+      <div className="p-4 text-sm text-red-600">
+        ไม่พบวิดีโอสำหรับแสดง (videoId/videoUrl ว่าง)
+      </div>
+    );
   }
 
   const containerId = `yt-player-${resolvedVideoId}`;
   const storageKey = `yt-notes-${resolvedVideoId}`;
   const MODE_STORAGE = `yt-save-mode-${resolvedVideoId}`;
+  const FOCUS_STORAGE = `yt-pause-on-focus-${resolvedVideoId}`;
 
   const [ready, setReady] = useState(false);
 
-  // ⛑️ โหลดโน้ตแบบกันพัง
+  // โหลดโน้ตแบบกันพัง
   const [notes, setNotes] = useState(() => {
     try {
       const raw = localStorage.getItem(storageKey);
@@ -70,25 +77,31 @@ export default function YouTubeNotes({ videoId, videoUrl }) {
       const parsed = JSON.parse(raw);
       return Array.isArray(parsed) ? parsed : [];
     } catch {
-      // ถ้า parse พัง จะไม่ทับของเดิมใน localStorage
       return [];
     }
   });
 
-  // "pause" | "continue" | "nochange"
-  const [saveAfterMode, setSaveAfterMode] = useState(() => {
-    return localStorage.getItem(MODE_STORAGE) || "pause";
-  });
-
-  // 🧷 จำโหมดไว้ต่อวิดีโอ
+  // โหมดหลังบันทึก: "pause" | "continue" | "nochange"
+  const [saveAfterMode, setSaveAfterMode] = useState(
+    () => localStorage.getItem(MODE_STORAGE) || "pause"
+  );
   useEffect(() => {
     localStorage.setItem(MODE_STORAGE, saveAfterMode);
-  }, [saveAfterMode, MODE_STORAGE]);
+  }, [saveAfterMode]);
+
+  // ใหม่: หยุดเมื่อเริ่มพิมพ์ (toggle)
+  const [pauseOnFocus, setPauseOnFocus] = useState(() => {
+    const saved = localStorage.getItem(FOCUS_STORAGE);
+    return saved == null ? true : saved === "true";
+  });
+  useEffect(() => {
+    localStorage.setItem(FOCUS_STORAGE, String(pauseOnFocus));
+  }, [pauseOnFocus]);
 
   const [q, setQ] = useState("");
   const [form, setForm] = useState({ start: "", end: "", text: "", tags: "" });
 
-  // 🔄 sync ลง localStorage ทุกครั้งที่ notes หรือ storageKey เปลี่ยน
+  // sync localStorage เสมอ
   useEffect(() => {
     try {
       localStorage.setItem(storageKey, JSON.stringify(notes));
@@ -114,7 +127,9 @@ export default function YouTubeNotes({ videoId, videoUrl }) {
     });
     return () => {
       mounted = false;
-      try { player?.destroy?.(); } catch {}
+      try {
+        player?.destroy?.();
+      } catch {}
     };
   }, [resolvedVideoId, containerId]);
 
@@ -125,11 +140,11 @@ export default function YouTubeNotes({ videoId, videoUrl }) {
       const k = e.key?.toLowerCase?.();
       if (k === "n" && !e.metaKey && !e.ctrlKey && !e.shiftKey) {
         e.preventDefault();
-        startNoteNow(true);   // หยุดแล้วจด
+        startNoteNow(true); // หยุดแล้วจด
       }
       if (k === "n" && e.shiftKey) {
         e.preventDefault();
-        startNoteNow(false);  // ไม่หยุดแล้วจด
+        startNoteNow(false); // ไม่หยุดแล้วจด
       }
       if ((e.ctrlKey || e.metaKey) && e.key === "Enter") {
         e.preventDefault();
@@ -145,9 +160,21 @@ export default function YouTubeNotes({ videoId, videoUrl }) {
     const sorted = [...notes].sort((a, b) => a.start - b.start);
     if (!term) return sorted;
     return sorted.filter(
-      (n) => n.text.toLowerCase().includes(term) || n.tags.join(" ").toLowerCase().includes(term)
+      (n) =>
+        n.text.toLowerCase().includes(term) ||
+        n.tags.join(" ").toLowerCase().includes(term)
     );
   }, [notes, q]);
+
+  // helper: pause ถ้าเปิดโหมด pauseOnFocus
+  const maybePauseOnFocus = () => {
+    if (!ready) return;
+    if (pauseOnFocus) {
+      try {
+        playerRef.current?.pauseVideo();
+      } catch {}
+    }
+  };
 
   // create note form
   const startNoteNow = (pause = true) => {
@@ -166,15 +193,26 @@ export default function YouTubeNotes({ videoId, videoUrl }) {
     if (isNaN(startS) || isNaN(endS)) return alert("เวลาไม่ถูกต้อง");
     if (endS < startS) return alert("end ต้องมากกว่าหรือเท่ากับ start");
 
-    const tagList = form.tags.split(",").map((t) => t.trim()).filter(Boolean);
+    const tagList = form.tags
+      .split(",")
+      .map((t) => t.trim())
+      .filter(Boolean);
     const next = [
       ...notes,
-      { id: crypto.randomUUID?.() ?? String(Date.now()), start: startS, end: endS, text: form.text.trim(), tags: tagList, createdAt: new Date().toISOString() },
+      {
+        id: crypto.randomUUID?.() ?? String(Date.now()),
+        start: startS,
+        end: endS,
+        text: form.text.trim(),
+        tags: tagList,
+        createdAt: new Date().toISOString(),
+      },
     ];
 
-    // ✅ เขียนลง state และ localStorage “ทันที” กันหลุดตอนสลับคลิปเร็ว ๆ
     setNotes(next);
-    try { localStorage.setItem(storageKey, JSON.stringify(next)); } catch {}
+    try {
+      localStorage.setItem(storageKey, JSON.stringify(next));
+    } catch {}
 
     setForm({ start: "", end: "", text: "", tags: "" });
 
@@ -192,7 +230,9 @@ export default function YouTubeNotes({ videoId, videoUrl }) {
   const removeNote = (id) => {
     const next = notes.filter((n) => n.id !== id);
     setNotes(next);
-    try { localStorage.setItem(storageKey, JSON.stringify(next)); } catch {}
+    try {
+      localStorage.setItem(storageKey, JSON.stringify(next));
+    } catch {}
   };
 
   const jumpAndPauseForEdit = (note) => {
@@ -200,7 +240,11 @@ export default function YouTubeNotes({ videoId, videoUrl }) {
     if (!p || !ready) return;
     p.seekTo(note.start, true);
     p.pauseVideo();
-    setForm((f) => ({ ...f, start: sToStamp(note.start), end: sToStamp(note.end ?? note.start) }));
+    setForm((f) => ({
+      ...f,
+      start: sToStamp(note.start),
+      end: sToStamp(note.end ?? note.start),
+    }));
     requestAnimationFrame(() => textRef.current?.focus());
   };
 
@@ -213,66 +257,55 @@ export default function YouTubeNotes({ videoId, videoUrl }) {
             <div id={containerId} className="aspect-video w-full" />
           </div>
 
-        {/* Controls */}
+          {/* Controls */}
+          {/* Controls */}
           <div className="mt-3 flex flex-wrap items-center gap-2">
             <button
-              onClick={() => startNoteNow(true)}
-              className="px-3 py-2 rounded-lg border-2 border-gray-200 bg-white hover:bg-gray-50"
+              onClick={() => setPauseOnFocus((v) => !v)}
+              className={`px-4 py-2 rounded-lg text-sm font-medium border-2 transition-all duration-200
+      ${
+        pauseOnFocus
+          ? "bg-indigo-600 border-indigo-600 text-white hover:bg-indigo-700"
+          : "bg-white border-gray-300 text-gray-700 hover:bg-gray-100"
+      }`}
             >
-              สร้างโน้ต (หยุดวิดีโอ)
+              {pauseOnFocus
+                ? "หยุดวิดีโอเมื่อเริ่มพิมพ์"
+                : "ไม่หยุดวิดีโอเมื่อพิมพ์"}
             </button>
-            <button
-              onClick={() => startNoteNow(false)}
-              className="px-3 py-2 rounded-lg border-2 border-gray-200 bg-white hover:bg-green-100"
-            >
-              สร้างโน้ต (ไม่หยุด)
-            </button>
-
-            <div className="flex-1" />
-
-            <div className="inline-flex rounded-lg border bg-white overflow-hidden">
-              <button
-                onClick={() => setSaveAfterMode("pause")}
-                className={`px-3 py-2 text-sm ${saveAfterMode === "pause" ? "bg-indigo-600 text-white" : "hover:bg-gray-50"}`}
-              >
-                หยุดหลังบันทึก
-              </button>
-              <button
-                onClick={() => setSaveAfterMode("continue")}
-                className={`px-3 py-2 text-sm border-l ${saveAfterMode === "continue" ? "bg-indigo-600 text-white" : "hover:bg-gray-50"}`}
-              >
-                เล่นต่อหลังบันทึก
-              </button>
-              <button
-                onClick={() => setSaveAfterMode("nochange")}
-                className={`px-3 py-2 text-sm border-l ${saveAfterMode === "nochange" ? "bg-indigo-600 text-white" : "hover:bg-gray-50"}`}
-              >
-                ไม่แตะวิดีโอ
-              </button>
-            </div>
           </div>
         </section>
 
-        {/* Editor + List (เหมือนเดิม) */}
-        <section className="md:col-span-2 flex flex-col lg:flex-row gap-4">
+        {/* Editor + List */}
+        <section className="md:col-span-2 flex justify-items-center flex-col lg:flex-row gap-2">
           <div className="rounded-2xl border bg-white shadow p-4 flex-1 min-w-0 md:max-w-none lg:max-w-[560px]">
-            <h2 className="text-xl sm:text-lg font-semibold mb-3">เพิ่มโน้ตตามช่วงเวลา</h2>
+            <h2 className="text-xl sm:text-lg font-semibold mb-3">
+              เพิ่มโน้ตตามช่วงเวลา
+            </h2>
 
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
               <div>
                 <label className="text-sm text-gray-600">Start</label>
                 <input
                   value={form.start}
-                  onChange={(e) => setForm((f) => ({ ...f, start: e.target.value }))}
+                  onChange={(e) =>
+                    setForm((f) => ({ ...f, start: e.target.value }))
+                  }
+                  onFocus={maybePauseOnFocus}
                   placeholder="1:23"
                   className="w-full mt-1 rounded-lg border px-3 py-2"
                 />
               </div>
               <div>
-                <label className="text-sm text-gray-600">End (ไม่ใส่ก็ได้)</label>
+                <label className="text-sm text-gray-600">
+                  End (ไม่ใส่ก็ได้)
+                </label>
                 <input
                   value={form.end}
-                  onChange={(e) => setForm((f) => ({ ...f, end: e.target.value }))}
+                  onChange={(e) =>
+                    setForm((f) => ({ ...f, end: e.target.value }))
+                  }
+                  onFocus={maybePauseOnFocus}
                   placeholder="2:10"
                   className="w-full mt-1 rounded-lg border px-3 py-2"
                 />
@@ -284,7 +317,10 @@ export default function YouTubeNotes({ videoId, videoUrl }) {
               <textarea
                 ref={textRef}
                 value={form.text}
-                onChange={(e) => setForm((f) => ({ ...f, text: e.target.value }))}
+                onChange={(e) =>
+                  setForm((f) => ({ ...f, text: e.target.value }))
+                }
+                onFocus={maybePauseOnFocus}
                 rows={3}
                 placeholder="สรุปใจความสำคัญ…"
                 className="w-full mt-1 rounded-lg border px-3 py-2"
@@ -295,7 +331,10 @@ export default function YouTubeNotes({ videoId, videoUrl }) {
               <label className="text-sm text-gray-600">แท็ก (คั่นด้วย ,)</label>
               <input
                 value={form.tags}
-                onChange={(e) => setForm((f) => ({ ...f, tags: e.target.value }))}
+                onChange={(e) =>
+                  setForm((f) => ({ ...f, tags: e.target.value }))
+                }
+                onFocus={maybePauseOnFocus}
                 placeholder="keyword1, keyword2"
                 className="w-full mt-1 rounded-lg border px-3 py-2"
               />
@@ -312,12 +351,13 @@ export default function YouTubeNotes({ videoId, videoUrl }) {
             </div>
           </div>
 
-          <div className="rounded-2xl border bg-white shadow p-4 flex-none w-full sm:w-auto md:w-full lg:w-[360px] xl:w-[420px]">
+          <div className="rounded-2xl   border bg-white shadow p-4 flex-1 w-full sm:w-auto md:w-full lg:w-[360px] xl:w-[420px]">
             <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
               <h3 className="font-semibold">โน้ตทั้งหมด</h3>
               <input
                 value={q}
                 onChange={(e) => setQ(e.target.value)}
+                onFocus={maybePauseOnFocus}
                 placeholder="ค้นหา…"
                 className="w-full sm:w-40 rounded-lg border px-3 py-2"
               />
@@ -325,7 +365,10 @@ export default function YouTubeNotes({ videoId, videoUrl }) {
 
             <ul className="mt-3 space-y-2 overflow-auto pr-1 max-h-[40vh] sm:max-h-[55vh] md:max-h-[65vh]">
               {filtered.map((n) => (
-                <li key={n.id} className="border rounded-xl p-3 hover:bg-indigo-50 transition">
+                <li
+                  key={n.id}
+                  className="border rounded-xl p-3 hover:bg-indigo-50 transition"
+                >
                   <div className="flex items-center justify-between gap-2">
                     <button
                       onClick={() => jumpAndPauseForEdit(n)}
@@ -334,7 +377,10 @@ export default function YouTubeNotes({ videoId, videoUrl }) {
                     >
                       {sToStamp(n.start)} – {sToStamp(n.end)}
                     </button>
-                    <button onClick={() => removeNote(n.id)} className="text-red-600 text-sm hover:underline">
+                    <button
+                      onClick={() => removeNote(n.id)}
+                      className="text-red-600 text-sm hover:underline"
+                    >
                       ลบ
                     </button>
                   </div>
@@ -342,7 +388,10 @@ export default function YouTubeNotes({ videoId, videoUrl }) {
                   {n.tags.length > 0 && (
                     <div className="mt-2 flex flex-wrap gap-1">
                       {n.tags.map((t) => (
-                        <span key={t} className="text-xs px-2 py-0.5 rounded-full bg-gray-100 border">
+                        <span
+                          key={t}
+                          className="text-xs px-2 py-0.5 rounded-full bg-gray-100 border"
+                        >
                           #{t}
                         </span>
                       ))}
@@ -350,7 +399,9 @@ export default function YouTubeNotes({ videoId, videoUrl }) {
                   )}
                 </li>
               ))}
-              {filtered.length === 0 && <li className="text-sm text-gray-500">ยังไม่มีโน้ต</li>}
+              {filtered.length === 0 && (
+                <li className="text-sm text-gray-500">ยังไม่มีโน้ต</li>
+              )}
             </ul>
           </div>
         </section>
