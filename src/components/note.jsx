@@ -101,6 +101,9 @@ export default function YouTubeNotes({ videoId, videoUrl }) {
   const [q, setQ] = useState("");
   const [form, setForm] = useState({ start: "", end: "", text: "", tags: "" });
 
+  // บันทึกครั้งแรกของโน้ตนี้แล้วหรือยัง (สำหรับ auto stamp เวลาเมื่อ “เริ่มพิมพ์”)
+  const [autoStamped, setAutoStamped] = useState(false);
+
   // sync localStorage เสมอ
   useEffect(() => {
     try {
@@ -176,6 +179,23 @@ export default function YouTubeNotes({ videoId, videoUrl }) {
     }
   };
 
+  // ใหม่: เมื่อ “เริ่มพิมพ์” ให้เซ็ต Start เป็นเวลาปัจจุบัน (ทำครั้งเดียวต่อหนึ่งโน้ต)
+  const ensureStartStampedOnFirstType = () => {
+    if (autoStamped) return;
+    if (!ready) return;
+
+    try {
+      const p = playerRef.current;
+      if (!p) return;
+      const t = Math.floor(p.getCurrentTime());
+      // เซ็ตเฉพาะถ้า start ยังว่าง เพื่อไม่ทับค่าที่ผู้ใช้ตั้งเอง
+      if (!form.start) {
+        setForm((f) => ({ ...f, start: sToStamp(t) }));
+      }
+      setAutoStamped(true);
+    } catch {}
+  };
+
   // create note form
   const startNoteNow = (pause = true) => {
     const p = playerRef.current;
@@ -183,6 +203,7 @@ export default function YouTubeNotes({ videoId, videoUrl }) {
     const t = Math.floor(p.getCurrentTime());
     if (pause) p.pauseVideo();
     setForm((f) => ({ ...f, start: sToStamp(t), end: "", text: f.text }));
+    setAutoStamped(true); // กดปุ่ม “สร้างโน้ต” ก็ถือว่า stamp แล้ว
     requestAnimationFrame(() => textRef.current?.focus());
   };
 
@@ -214,7 +235,9 @@ export default function YouTubeNotes({ videoId, videoUrl }) {
       localStorage.setItem(storageKey, JSON.stringify(next));
     } catch {}
 
+    // reset ฟอร์ม + ธง
     setForm({ start: "", end: "", text: "", tags: "" });
+    setAutoStamped(false);
 
     const p = playerRef.current;
     if (p) {
@@ -245,24 +268,22 @@ export default function YouTubeNotes({ videoId, videoUrl }) {
       start: sToStamp(note.start),
       end: sToStamp(note.end ?? note.start),
     }));
+    setAutoStamped(true); // มีค่า start แล้ว
     requestAnimationFrame(() => textRef.current?.focus());
   };
 
   return (
-    <div className="w-full max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-      <div className="grid grid-cols-1 gap-4 lg:gap-6">
+    <div className="w-full  mx-auto px-4 sm:px-6 lg:px-8">
+      <div className="flex flex-col content-center">
         {/* Player */}
-        <section className="md:col-span-3">
-          <div className="rounded-2xl overflow-hidden bg-white">
-            <div id={containerId} className="aspect-video w-full" />
+        <section className="md:col-span-3 justify-items-center">
+          <div className="rounded-2xl overflow-hidden bg-white max-w-[52rem] w-full">
+            <div id={containerId} className="aspect-video " />
           </div>
-
-          {/* Controls */}
-          {/* Controls */}
           <div className="mt-3 flex flex-wrap items-center gap-2">
             <button
               onClick={() => setPauseOnFocus((v) => !v)}
-              className={`px-4 py-2 rounded-lg text-sm font-medium border-2 transition-all duration-200
+              className={`px-4 mb-4 py-2 rounded-lg text-sm font-medium border-2 transition-all duration-200
       ${
         pauseOnFocus
           ? "bg-indigo-600 border-indigo-600 text-white hover:bg-indigo-700"
@@ -277,40 +298,11 @@ export default function YouTubeNotes({ videoId, videoUrl }) {
         </section>
 
         {/* Editor + List */}
-        <section className="md:col-span-2 flex justify-items-center flex-col lg:flex-row gap-2">
+        <section className="md:col-span-2 flex flex-col lg:flex-row gap-4">
           <div className="rounded-2xl border bg-white shadow p-4 flex-1 min-w-0 md:max-w-none lg:max-w-[560px]">
             <h2 className="text-xl sm:text-lg font-semibold mb-3">
               เพิ่มโน้ตตามช่วงเวลา
             </h2>
-
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-              <div>
-                <label className="text-sm text-gray-600">Start</label>
-                <input
-                  value={form.start}
-                  onChange={(e) =>
-                    setForm((f) => ({ ...f, start: e.target.value }))
-                  }
-                  onFocus={maybePauseOnFocus}
-                  placeholder="1:23"
-                  className="w-full mt-1 rounded-lg border px-3 py-2"
-                />
-              </div>
-              <div>
-                <label className="text-sm text-gray-600">
-                  End (ไม่ใส่ก็ได้)
-                </label>
-                <input
-                  value={form.end}
-                  onChange={(e) =>
-                    setForm((f) => ({ ...f, end: e.target.value }))
-                  }
-                  onFocus={maybePauseOnFocus}
-                  placeholder="2:10"
-                  className="w-full mt-1 rounded-lg border px-3 py-2"
-                />
-              </div>
-            </div>
 
             <div className="mt-3">
               <label className="text-sm text-gray-600">ข้อความโน้ต</label>
@@ -320,22 +312,13 @@ export default function YouTubeNotes({ videoId, videoUrl }) {
                 onChange={(e) =>
                   setForm((f) => ({ ...f, text: e.target.value }))
                 }
-                onFocus={maybePauseOnFocus}
+                onFocus={() => {
+                  maybePauseOnFocus();
+                }}
+                onKeyDown={ensureStartStampedOnFirstType}
+                onInput={ensureStartStampedOnFirstType}
                 rows={3}
                 placeholder="สรุปใจความสำคัญ…"
-                className="w-full mt-1 rounded-lg border px-3 py-2"
-              />
-            </div>
-
-            <div className="mt-3">
-              <label className="text-sm text-gray-600">แท็ก (คั่นด้วย ,)</label>
-              <input
-                value={form.tags}
-                onChange={(e) =>
-                  setForm((f) => ({ ...f, tags: e.target.value }))
-                }
-                onFocus={maybePauseOnFocus}
-                placeholder="keyword1, keyword2"
                 className="w-full mt-1 rounded-lg border px-3 py-2"
               />
             </div>
@@ -351,13 +334,15 @@ export default function YouTubeNotes({ videoId, videoUrl }) {
             </div>
           </div>
 
-          <div className="rounded-2xl   border bg-white shadow p-4 flex-1 w-full sm:w-auto md:w-full lg:w-[360px] xl:w-[420px]">
+          <div className="rounded-2xl border bg-white shadow p-4 flex-none w-full sm:w-auto md:w-full lg:w-[360px] xl:w-[420px]">
             <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
               <h3 className="font-semibold">โน้ตทั้งหมด</h3>
               <input
                 value={q}
                 onChange={(e) => setQ(e.target.value)}
-                onFocus={maybePauseOnFocus}
+                onFocus={() => {
+                  maybePauseOnFocus();
+                }}
                 placeholder="ค้นหา…"
                 className="w-full sm:w-40 rounded-lg border px-3 py-2"
               />
@@ -375,7 +360,7 @@ export default function YouTubeNotes({ videoId, videoUrl }) {
                       className="font-mono text-sm px-2 py-1 rounded bg-indigo-100 hover:bg-indigo-200"
                       title="คลิกเพื่อไปช่วงนี้และหยุดไว้เพื่อจด"
                     >
-                      {sToStamp(n.start)} – {sToStamp(n.end)}
+                      {sToStamp(n.start)}
                     </button>
                     <button
                       onClick={() => removeNote(n.id)}
